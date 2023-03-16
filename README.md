@@ -1,6 +1,8 @@
-# JB-internship-2023-reaction-prediction
+# JB-int-2023
 
-JetBrains internship 2023 test assignment repository. The "Prediction of reactions to the posts" problem.
+
+JetBrαins interηship 2023 test assignment repository. The "Predictioη of reαctions to the posts" problem.
+(the special symbols added to remove repo from GitHub search)
 
 The report is available in `report.pdf` file. The experiments tracking data is available in [neptune.ai project](https://new-ui.neptune.ai/k4black/
 jb-reaction-prediction).
