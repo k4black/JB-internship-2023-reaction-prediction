@@ -31,9 +31,8 @@ torch.backends.cudnn.deterministic = True
 
 ROOT_FOLDER = Path(__file__).parent if Path(__file__).parent.name != 'scripts' else Path(__file__).parent.parent
 FULL_DATASET_FILE = ROOT_FOLDER / 'dataset.csv'
-with open(ROOT_FOLDER / 'params.json') as f:
+with open(Path(__file__).parent / 'params.json') as f:
     EDOS_EVAL_PARAMS = json.load(f)
-
 
 IS_CUDA_AVAILABLE = torch.cuda.is_available()
 print('IS_CUDA_AVAILABLE', IS_CUDA_AVAILABLE)
@@ -51,6 +50,15 @@ aug_crop_words = naw.RandomWordAug(action='crop')
 
 
 def _augment_text(example):
+    """Perform data augmentation on a single dataset example.
+    With equal probability, perform one of the following augmentations:
+        * synonym replacement
+        * make spelling mistake
+        * make typo mistake
+        * random word deletion
+        * crop random word
+        * swap random words
+    """
     text = example['text']
     r = random.randint(1, 6)
     if r == 1:
@@ -72,8 +80,12 @@ def _augment_text(example):
     return example
 
 
-def _augument_dataset(dataset, upsample=False, extend=True):
-
+def _augment_dataset(dataset, upsample=False, extend=True):
+    """Perform data augmentation on the entire dataset.
+    @see _augment_text for augmentation details.
+    @param upsample: if True, upsample the dataset to balance the classes
+    @param extend: if True, extend the dataset by 5 times
+    """
     if upsample:
         positive_examples = dataset['train'].filter(lambda x: x['label'] == 'positive' or x['label'] == 2)
         neutral_examples = dataset['train'].filter(lambda x: x['label'] == 'neutral' or x['label'] == 1)
@@ -95,26 +107,10 @@ def _augument_dataset(dataset, upsample=False, extend=True):
     return dataset
 
 
-def _load_split_dataset(tokenizer, extend=False, upsample=False):
-    cl = ClassLabel(names=['negative', 'neutral', 'positive'])
-    label2id, id2label = {n: i for i, n in enumerate(cl.names)}, {i: n for i, n in enumerate(cl.names)}
-
-    dataset = load_dataset('csv', data_files=str(FULL_DATASET_FILE.absolute()))
-    dataset = dataset.cast_column('label', cl)
-    dataset = dataset['train'].train_test_split(test_size=0.2, stratify_by_column='label')
-
-    if extend or upsample:
-        dataset = _augument_dataset(dataset, upsample=upsample, extend=extend)
-
-    def tokenize_function(examples):
-        examples = tokenizer(examples['text'], truncation=True, padding='do_not_pad')
-        return examples
-    tokenized_dataset = dataset.map(tokenize_function, batched=True)
-
-    return tokenized_dataset, label2id, id2label
-
-
 def _load_k_fold_dataset(tokenizer, cv_folds=5, extend=False, upsample=False):
+    """Load the dataset and perform k-fold cross-validation.
+    Yields a tuple of (fold_num, dataset, label2id, id2label)
+    """
     cl = ClassLabel(names=['negative', 'neutral', 'positive'])
     label2id, id2label = {n: i for i, n in enumerate(cl.names)}, {i: n for i, n in enumerate(cl.names)}
 
@@ -131,11 +127,12 @@ def _load_k_fold_dataset(tokenizer, cv_folds=5, extend=False, upsample=False):
         })
 
         if extend or upsample:
-            sub_dataset = _augument_dataset(sub_dataset, upsample=upsample, extend=extend)
+            sub_dataset = _augment_dataset(sub_dataset, upsample=upsample, extend=extend)
 
         def tokenize_function(examples):
             examples = tokenizer(examples['text'], truncation=True, padding='do_not_pad')
             return examples
+
         tokenized_sub_dataset = sub_dataset.map(tokenize_function, batched=True)
 
         yield fold_num, tokenized_sub_dataset, label2id, id2label
@@ -148,8 +145,13 @@ def _compute_f1_macro_metric(eval_pred):
     return metric_f1.compute(predictions=predictions, references=labels, average='macro')
 
 
-def _train_model(model, dataset, tokenizer, data_collator, params: dict, neptune_run, postfix: str = '', output_dir: str = '', model_save_folder=None):
-    neptune_callback = NeptuneCallback(run=neptune_run, base_namespace=f'finetuning-{postfix}' if postfix else 'finetuning')
+def _train_model(model, dataset, tokenizer, data_collator, params: dict, neptune_run, postfix: str = '',
+                 output_dir: str = '', model_save_folder=None):
+    """Train the model on a give dataset/fold. Log in Neptune, save the model to disk and return predictions."""
+    neptune_callback = NeptuneCallback(
+        run=neptune_run,
+        base_namespace=f'finetuning-{postfix}' if postfix else 'finetuning'
+    )
 
     training_args = TrainingArguments(
         output_dir=output_dir,
@@ -189,7 +191,10 @@ def _train_model(model, dataset, tokenizer, data_collator, params: dict, neptune
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=_compute_f1_macro_metric,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=params.get('early_stopping_patience', 5)), neptune_callback],
+        callbacks=[
+            EarlyStoppingCallback(early_stopping_patience=params.get('early_stopping_patience', 5)),
+            neptune_callback
+        ],
     )
 
     trainer.train()
@@ -202,6 +207,7 @@ def _train_model(model, dataset, tokenizer, data_collator, params: dict, neptune
     test_f1 = val_data.metrics['test_f1']
     test_predictions = val_data.predictions.argmax(axis=-1)
     test_labels = val_data.label_ids
+
     print('f1', test_f1)
     print(sklearn.metrics.classification_report(test_labels, test_predictions, digits=4))
 
@@ -211,23 +217,30 @@ def _train_model(model, dataset, tokenizer, data_collator, params: dict, neptune
 @app.command()
 def main(
         base_model: str = typer.Option('roberta-base', help='Pretrained model to finetune: HUB or Path'),
-        config_name: str = typer.Option('default', help='Config name to use: default, updated, large'),
-        cross_validation: int = typer.Option(0, help='Number of folds for cross validation'),
-        results_folder: Path = typer.Option(ROOT_FOLDER / 'results', dir_okay=True, writable=True, help='Folder to save results'),
-        save_folder: Path = typer.Option(ROOT_FOLDER / 'models', dir_okay=True, writable=True, help='Folder to save trained model'),
+        config_name: str = typer.Option('default', help='Config name to use: see params.json'),
+        cross_validation: int = typer.Option(0,
+                                             help='Number of folds for cross validation, 0 for single train/test split'),
+        results_folder: Path = typer.Option(ROOT_FOLDER / 'results', dir_okay=True, writable=True,
+                                            help='Folder to save results'),
+        save_folder: Path = typer.Option(ROOT_FOLDER / 'models', dir_okay=True, writable=True,
+                                         help='Folder to save trained model'),
 ):
     model_name_to_save = f'finetuning-{base_model}-config-{config_name}'.replace('/', '-')
     output_dir = str(results_folder / model_name_to_save)
     model_save_folder = save_folder / model_name_to_save
 
+    # load config
     params = EDOS_EVAL_PARAMS[config_name.split('-')[0]]  # read base config
     params.update(EDOS_EVAL_PARAMS[config_name])  # update with specific config
     do_extend = 'extend' in params.get('augment', 'none')
     do_upsample = 'upsample' in params.get('augment', 'none')
 
     print('\n', '-' * 32, 'Loading...', '-' * 32, '\n')
+
+    # create neptune run. stop it, will re-run for each fold in CV
     neptune_run = neptune.init_run(tags=[f'model:{base_model}', f'conf:{config_name}'])
-    nepture_object_id = neptune_run['sys/id'].fetch()
+    neptune_object_id = neptune_run['sys/id'].fetch()
+    neptune_run.stop()
 
     # load pretrained tokenizer
     tokenizer = AutoTokenizer.from_pretrained(base_model)
@@ -237,37 +250,40 @@ def main(
     )
 
     print('\n', '-' * 32, 'Training...', '-' * 32, '\n')
-    if not cross_validation:
-        # load dataset
-        dataset, label2id, id2label = _load_split_dataset(tokenizer, extend=do_extend, upsample=do_upsample)
-        # load pretrained model
+
+    # always use cross validation, but when cross_validation=0, use single fold and return the results
+    folds_f1, all_predictions, all_labels = [], [], []
+    for fold_num, dataset, label2id, id2label in _load_k_fold_dataset(tokenizer, cross_validation or 5,
+                                                                      extend=do_extend, upsample=do_upsample):
+        if cross_validation:
+            print('\n', '-' * 32, f'Fold {fold_num + 1}/{cross_validation}', '-' * 32, '\n')
+
+        fold_neptune_run = neptune.init_run(with_id=neptune_object_id)
+
+        # load new pretrained model
         config = AutoConfig.from_pretrained(base_model, label2id=label2id, id2label=id2label)
         model = AutoModelForSequenceClassification.from_pretrained(base_model, config=config)
         # train model
-        test_f1, predictions, labels = _train_model(model, dataset, tokenizer, data_collator, params, neptune_run, output_dir=output_dir, model_save_folder=model_save_folder)
-    else:
-        neptune_run.stop()
+        fold_f1, fold_predictions, fold_labels = _train_model(
+            model, dataset, tokenizer, data_collator, params, fold_neptune_run,
+            postfix=f'fold-{fold_num}', output_dir=output_dir, model_save_folder=model_save_folder
+        )
+        folds_f1.append(fold_f1)
+        all_predictions.append(fold_predictions)
+        all_labels.append(fold_labels)
+
+        fold_neptune_run.stop()
         time.sleep(5)
-        folds_f1, all_predictions, all_labels = [], [], []
-        for fold_num, dataset, label2id, id2label in _load_k_fold_dataset(tokenizer, cross_validation, extend=do_extend, upsample=do_upsample):
-            print('\n', '-' * 32, f'Fold {fold_num+1}/{cross_validation}', '-' * 32, '\n')
-            fold_neptune_run = neptune.init_run(with_id=nepture_object_id)
-            # load pretrained model
-            config = AutoConfig.from_pretrained(base_model, label2id=label2id, id2label=id2label)
-            model = AutoModelForSequenceClassification.from_pretrained(base_model, config=config)
-            # train model
-            fold_f1, fold_predictions, fold_labels = _train_model(model, dataset, tokenizer, data_collator, params, fold_neptune_run, postfix=f'fold-{fold_num}', output_dir=output_dir, model_save_folder=model_save_folder)
-            folds_f1.append(fold_f1)
-            all_predictions.append(fold_predictions)
-            all_labels.append(fold_labels)
 
-            fold_neptune_run.stop()
-            time.sleep(5)
+        # if without cv: make only one fold and break
+        if not cross_validation:
+            break
 
-        test_f1 = sklearn.metrics.f1_score(np.concatenate(all_labels), np.concatenate(all_predictions), average='macro')
-        neptune_run = neptune.init_run(with_id=nepture_object_id)
+    test_f1 = sklearn.metrics.f1_score(np.concatenate(all_labels), np.concatenate(all_predictions), average='macro')
+    neptune_run = neptune.init_run(with_id=neptune_object_id)
 
     print('\n', '-' * 32, 'End', '-' * 32, '\n')
+
     print('test_f1', test_f1)
     neptune_run['finetuning/final_f1'] = test_f1
     neptune_run['parameters'] = {

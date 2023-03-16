@@ -49,23 +49,9 @@ def _load_dataset():
     return df
 
 
-def _train_validate_split(
-        model: BaseEstimator,
-        data_train: list,
-        target_train: list,
-        data_val: list,
-        target_val: list,
-        scorer: Callable,
-) -> dict:
-    """Fit predict model on current split
-    :param model: Model to be trained
-    :param data_train: train data to perform k-fold cv
-    :param target_train: target train data
-    :param data_val: validate data to scoring
-    :param target_val: validate target to scoring
-    :param scorer: function to score prediction. args: target, prediction
-    :return: dict with results of cv
-    """
+def _train_validate_split(model: BaseEstimator, data_train: list, target_train: list, data_val: list,
+                          target_val: list, scorer: Callable) -> dict:
+    """Fit predict model on current split and return score and prediction for validation set"""
     data_train, data_val = np.array(data_train), np.array(data_val)
     target_train, target_val = np.array(target_train), np.array(target_val)
 
@@ -87,24 +73,8 @@ def _train_validate_split(
     }
 
 
-def _cv_kfold(
-        model: BaseEstimator,
-        data: list,
-        target: list,
-        scorer: Callable,
-        k: int = 5,
-        *,
-        random_state: int = 42,
-) -> dict:
-    """Fit predict model multiple times with k-fold cross validation
-    :param model: Model to be trained
-    :param data: train data to perform k-fold cv
-    :param target: target train data
-    :param scorer: function to score prediction. args: target, prediction
-    :param k: number of folds in cross validation
-    :param random_state: fixed random state
-    :return: dict with results of cv
-    """
+def _cv_kfold(model: BaseEstimator, data: list, target: list, scorer: Callable, k: int = 5, random_state=42) -> dict:
+    """Fit predict model multiple times with k-fold cross validation"""
     random_instance = np.random.RandomState(random_state)
 
     data = np.array(data)
@@ -156,17 +126,15 @@ def _cv_kfold(
 def main():
     print('\n', '-' * 32, 'Loading...', '-' * 32, '\n')
 
+    # load dataset
     df = _load_dataset()
     ft_df = np.stack([fasttext_model.get_sentence_vector(sent) for sent in df['text']])
 
-    test = CountVectorizer()
-    test.fit(df['text'])
-    print(len(test.vocabulary_))
-
+    # define models and vectorizers
     vectorizers = {
         'Count': CountVectorizer(),
         'Tfidf': TfidfVectorizer(),
-        'Hashing': HashingVectorizer(n_features=2**16),  # default 2**20 but it's too much for the task
+        'Hashing': HashingVectorizer(n_features=2**16),  # default 2**20, but it's too much for the task
         'FastText': None,
     }
     models = {
