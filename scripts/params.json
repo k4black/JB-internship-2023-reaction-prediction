@@ -1,0 +1,74 @@
+{
+    "default": {
+        "augment": "none",
+        "learning_rate": 1e-5,
+        "batch_size": 32,
+        "max_epochs": 20,
+        "eval_steps": 50
+    },
+    "default-lr2e-6": {
+        "learning_rate": 2e-6
+    },
+    "default-lr2e-5": {
+        "learning_rate": 2e-5
+    },
+    "default-b16": {
+        "learning_rate": 1e-5,
+        "batch_size": 16,
+        "eval_steps": 100
+    },
+    "default-lr2e-5-b16": {
+        "learning_rate": 2e-5,
+        "batch_size": 16,
+        "eval_steps": 100
+    },
+    "default-b8": {
+        "learning_rate": 1e-5,
+        "batch_size": 8,
+        "eval_steps": 200
+    },
+    "default-lr2e-5-b8": {
+        "learning_rate": 2e-5,
+        "batch_size": 8,
+        "eval_steps": 200
+    },
+
+    "augmentation": {
+        "augment": "extend",
+        "learning_rate": 2e-5,
+        "batch_size": 8,
+        "max_epochs": 10,
+        "eval_steps": 200
+    },
+
+    "augmentation-upsample": {
+        "augment": "upsample"
+    },
+
+    "augmentation-extend-lr1e-5": {
+        "augment": "extend",
+        "learning_rate": 1e-5
+    },
+
+    "augmentation-upsample-lr1e-5": {
+        "augment": "upsample",
+        "learning_rate": 1e-5
+    },
+
+
+    "efl": {
+        "augment": "none",
+        "learning_rate": 1e-5,
+        "batch_size": 8,
+        "max_epochs": 20,
+        "eval_steps": 300
+    },
+
+    "efl-lr5e-6": {
+        "learning_rate": 5e-6
+    },
+
+    "efl-lr2e-5": {
+        "learning_rate": 2e-5
+    }
+}

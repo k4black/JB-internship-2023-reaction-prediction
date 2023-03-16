@@ -1,0 +1,30 @@
+# dl
+transformers
+torch
+
+# data management
+pandas
+numpy
+evaluate
+datasets
+
+# utils
+neptune-client==0.16.18
+typer
+torchinfo
+accelerate
+tqdm
+
+# text
+nlpaug
+gensim
+nltk
+
+# ml
+scikit-learn
+fasttext
+spacy
+scikit-learn-intelex
+hyperopt
+scikit-optimize
+git+https://github.com/hyperopt/hyperopt-sklearn
